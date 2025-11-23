@@ -1,4 +1,4 @@
-﻿namespace Subnautica.API.Features
+namespace Subnautica.API.Features
 {
     using System;
     using System.Collections.Generic;
@@ -156,7 +156,14 @@
          */
         public static string GetLoggedInName()
         {
-            return global::PlatformUtils.main.GetLoggedInUserName();
+            var userName = global::PlatformUtils.main.GetLoggedInUserName();
+            if (string.IsNullOrEmpty(userName))
+            {
+                // Generate a fallback username for cracked/non-Steam clients
+                return string.Format("Player_{0}", Environment.UserName);
+            }
+
+            return userName;
         }
 
         /**
@@ -171,7 +178,9 @@
             var userId = global::PlatformUtils.main.GetCurrentUserId();
             if (userId == "0" || userId.IsNull())
             {
-                return null;
+                // Generate a fallback ID for cracked/non-Steam clients
+                // Use a combination of machine name and random GUID to ensure uniqueness
+                return CreateMD5(string.Format("{0}_{1}_{2}", Environment.MachineName, Environment.UserName, System.Guid.NewGuid().ToString()));
             }
 
             return userId;
@@ -582,21 +591,12 @@
          */
         public static bool IsBepinexInstalled()
         {
-            string gamePath = null;
-
-            foreach (var item in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                if (item.Location.Contains("Managed\\Assembly-CSharp.dll"))
-                {
-                    gamePath = item.Location.Replace("SubnauticaZero_Data\\Managed\\Assembly-CSharp.dll", "");
-                    break;
-                }
-            }
+            string gamePath = GetGamePath();
 
             if (gamePath.IsNull())
             {
-                Log.Error("IsBepinexInstalled: Null Problem");
-                return true;
+                Log.Error("IsBepinexInstalled: Game path not detected, assuming BepInEx is not installed for cracked clients");
+                return false;
             }
             else
             {
@@ -617,6 +617,62 @@
             }
 
             return false;
+        }
+
+        /**
+         *
+         * Oyun yolunu tespit eder (Steam ve cracked sürümler için)
+         *
+         * @author Ismail <ismaiil_0234@hotmail.com>
+         *
+         */
+        public static string GetGamePath()
+        {
+            // First try the original method for Steam/official versions
+            foreach (var item in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (item.Location.Contains("Managed\\Assembly-CSharp.dll"))
+                {
+                    return item.Location.Replace("SubnauticaZero_Data\\Managed\\Assembly-CSharp.dll", "");
+                }
+            }
+
+            // Fallback for cracked/non-Steam versions - try to detect from current executable location
+            try
+            {
+                var currentAssembly = Assembly.GetExecutingAssembly().Location;
+                if (!string.IsNullOrEmpty(currentAssembly))
+                {
+                    var currentDir = Path.GetDirectoryName(currentAssembly);
+                    
+                    // Look for game indicators in current directory and parent directories
+                    var searchPaths = new[]
+                    {
+                        currentDir,
+                        Path.GetDirectoryName(currentDir),
+                        Path.GetDirectoryName(Path.GetDirectoryName(currentDir))
+                    };
+
+                    foreach (var searchPath in searchPaths)
+                    {
+                        if (searchPath == null) continue;
+
+                        // Check for typical game files
+                        if (File.Exists(Path.Combine(searchPath, "SubnauticaZero.exe")) ||
+                            File.Exists(Path.Combine(searchPath, "UnityPlayer.dll")) ||
+                            Directory.Exists(Path.Combine(searchPath, "SubnauticaZero_Data")))
+                        {
+                            return searchPath;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"GetGamePath fallback detection failed: {ex}");
+            }
+
+            return null;
         }
 
         /**
